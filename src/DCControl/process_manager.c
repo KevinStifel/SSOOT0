@@ -69,7 +69,7 @@ void handle_status() {
 }
 
 void handle_abort(int seconds) {
-    // 1. Verificar si hay procesos en ejecución
+    // Revisar si hay procesos en ejecución
     int running_count = 0;
     for (int i = 0; i < process_count; i++) {
         if (processes[i].state == RUNNING) {
@@ -82,44 +82,17 @@ void handle_abort(int seconds) {
         return;
     }
 
-    // 2. Guardar snapshot de los procesos RUNNING en este momento
-    pid_t *snapshot = malloc(running_count * sizeof(pid_t));
-    int idx = 0;
-    for (int i = 0; i < process_count; i++) {
-        if (processes[i].state == RUNNING) {
-            snapshot[idx++] = processes[i].pid;
-        }
+    pid_t pid = fork();
+    if (pid == 0) {
+        // Hijo → solo espera y notifica al padre
+        sleep(seconds);
+        kill(getppid(), SIGUSR1);
+        exit(0);
+    } else if (pid < 0) {
+        perror("fork");
     }
-
-    // 3. Esperar <seconds>
-    sleep(seconds);
-
-    // 4. Revisar cuáles siguen vivos y matarlos con SIGTERM
-    printf("Abort cumplido.\n");
-    printf("%-8s %-12s %-6s %-6s %-6s\n", 
-           "PID", "NAME", "TIME", "EXIT", "SIGNAL");
-
-    for (int i = 0; i < running_count; i++) {
-        for (int j = 0; j < process_count; j++) {
-            if (processes[j].pid == snapshot[i] && processes[j].state == RUNNING) {
-                long elapsed = difftime(time(NULL), processes[j].start_time);
-
-                printf("%-8d %-12s %-6ld %-6d %-6d\n",
-                       processes[j].pid,
-                       processes[j].name,
-                       elapsed,
-                       processes[j].exit_code,
-                       processes[j].signal_value);
-
-                // Enviar señal SIGTERM
-                kill(processes[j].pid, SIGTERM);
-            }
-        }
-    }
-
-    free(snapshot);
+    // Padre no se bloquea
 }
-
 
 void sigchld_handler(int sig) {
     int status;
@@ -138,6 +111,27 @@ void sigchld_handler(int sig) {
                     processes[i].signal_value = WTERMSIG(status);
                 }
             }
+        }
+    }
+}
+
+void sigusr1_handler(int sig) {
+    printf("Abort cumplido.\n");
+    printf("%-8s %-12s %-6s %-6s %-6s\n", 
+           "PID", "NAME", "TIME", "EXIT", "SIGNAL");
+
+    for (int i = 0; i < process_count; i++) {
+        if (processes[i].state == RUNNING) {
+            long elapsed = difftime(time(NULL), processes[i].start_time);
+            printf("%-8d %-12s %-6ld %-6d %-6d\n",
+                   processes[i].pid,
+                   processes[i].name,
+                   elapsed,
+                   processes[i].exit_code,
+                   processes[i].signal_value);
+
+            // Enviar señal SIGTERM
+            kill(processes[i].pid, SIGTERM);
         }
     }
 }

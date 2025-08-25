@@ -9,6 +9,7 @@
 int main(int argc, char const *argv[]) {
     set_buffer();  // ya dado, no lo toques
     signal(SIGCHLD, sigchld_handler);
+    signal(SIGUSR1, sigusr1_handler);
     int time_max = (argc > 1) ? atoi(argv[1]) : -1; // -1 si no hay límite
 
     while (1) {
