@@ -158,7 +158,6 @@ void handle_shutdown() {
         if (processes[i].state == RUNNING) {
             if (kill(-processes[i].pid, 0) == 0) {   // sigue vivo
                 kill(-processes[i].pid, SIGINT);     // SIGINT = 2
-                processes[i].signal_value = 2;       // registrar
             }
         }
     }
@@ -172,7 +171,6 @@ void handle_shutdown() {
             if (processes[i].state == RUNNING) {
                 if (kill(-processes[i].pid, 0) == 0) { // sigue vivo
                     kill(-processes[i].pid, SIGKILL);  // SIGKILL = 9
-                    processes[i].signal_value = 9;
                 }
             }
         }
@@ -189,15 +187,17 @@ void sigchld_handler(int sig) {
 
     while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
         for (int i = 0; i < process_count; i++) {
-            if (processes[i].pid == pid && processes[i].state == RUNNING) {
+            if (processes[i].pid == pid) {
                 processes[i].state = FINISHED;
                 processes[i].end_time = time(NULL);
 
                 if (WIFEXITED(status)) {
                     processes[i].exit_code = WEXITSTATUS(status);
+                    processes[i].signal_value = 0;  // terminó normalmente
                 }
                 if (WIFSIGNALED(status)) {
-                    processes[i].signal_value = WTERMSIG(status);
+                    processes[i].exit_code = -1;
+                    processes[i].signal_value = WTERMSIG(status); // ej: 9 (SIGKILL)
                 }
             }
         }
@@ -226,6 +226,29 @@ void sigusr1_handler(int sig) {
 }
 
 void sigusr2_handler(int sig) {
+    int status;
+    pid_t pid;
+
+    // Forzar a recoger todos los procesos zombies
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        for (int i = 0; i < process_count; i++) {
+            if (processes[i].pid == pid) {
+                processes[i].state = FINISHED;
+                processes[i].end_time = time(NULL);
+
+                if (WIFEXITED(status)) {
+                    processes[i].exit_code = WEXITSTATUS(status);
+                    processes[i].signal_value = 0;
+                }
+                if (WIFSIGNALED(status)) {
+                    processes[i].exit_code = -1;
+                    processes[i].signal_value = WTERMSIG(status);
+                }
+            }
+        }
+    }
+
+    // Ahora sí imprimir estadísticas
     printf("DCControl finalizado.\n");
     for (int i = 0; i < process_count; i++) {
         long elapsed = difftime(
@@ -239,6 +262,10 @@ void sigusr2_handler(int sig) {
                processes[i].exit_code,
                processes[i].signal_value);
     }
+
     exit(0);
 }
+
+
+
 
