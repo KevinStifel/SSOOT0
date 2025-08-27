@@ -26,4 +26,5 @@ void handle_shutdown();
 void handle_emergency();
 void sigchld_handler(int sig);
 void sigusr1_handler(int sig);
+void sigusr2_handler(int sig);
 #endif

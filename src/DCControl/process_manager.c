@@ -123,6 +123,8 @@ void handle_abort(int seconds) {
     // Padre no se bloquea
 }
 
+int shutdown_pending = 0;   // global
+
 void handle_shutdown() {
     int running_count = 0;
     for (int i = 0; i < process_count; i++) {
@@ -131,7 +133,7 @@ void handle_shutdown() {
         }
     }
 
-    // Caso 1: no hay procesos activos
+    // Caso 1: no hay procesos en ejecución
     if (running_count == 0) {
         printf("DCControl finalizado.\n");
         for (int i = 0; i < process_count; i++) {
@@ -149,44 +151,37 @@ void handle_shutdown() {
         exit(0);
     }
 
-    // Caso 2: hay procesos activos → enviar SIGINT
-    printf("Shutdown iniciado. Enviando SIGINT a procesos activos...\n");
+    // Caso 2: hay procesos en ejecución
+    shutdown_pending = 1; // anula abort
+
     for (int i = 0; i < process_count; i++) {
         if (processes[i].state == RUNNING) {
-            kill(-processes[i].pid, SIGINT);  // señal al grupo del proceso
+            if (kill(-processes[i].pid, 0) == 0) {   // sigue vivo
+                kill(-processes[i].pid, SIGINT);     // SIGINT = 2
+                processes[i].signal_value = 2;       // registrar
+            }
         }
     }
 
-    // Esperar 10 segundos sin bloquear el input loop
+    // Hijo en background que espera 10 segundos y manda SIGKILL si hace falta
     pid_t pid = fork();
     if (pid == 0) {
         sleep(10);
 
-        // Pasado el tiempo → forzar SIGKILL a procesos que sigan vivos
         for (int i = 0; i < process_count; i++) {
             if (processes[i].state == RUNNING) {
-                kill(-processes[i].pid, SIGKILL);
+                if (kill(-processes[i].pid, 0) == 0) { // sigue vivo
+                    kill(-processes[i].pid, SIGKILL);  // SIGKILL = 9
+                    processes[i].signal_value = 9;
+                }
             }
         }
 
-        // Imprimir estadísticas finales
-        printf("DCControl finalizado.\n");
-        for (int i = 0; i < process_count; i++) {
-            long elapsed = difftime(
-                (processes[i].state == FINISHED ? processes[i].end_time : time(NULL)),
-                processes[i].start_time
-            );
-            printf("%d %s %ld %d %d\n",
-                   processes[i].pid,
-                   processes[i].name,
-                   elapsed,
-                   processes[i].exit_code,
-                   processes[i].signal_value);
-        }
-        exit(0);
+        // avisar al padre que termine e imprima stats
+        kill(getppid(), SIGUSR2);
+        _exit(0);
     }
 }
-
 
 void sigchld_handler(int sig) {
     int status;
@@ -229,3 +224,21 @@ void sigusr1_handler(int sig) {
         }
     }
 }
+
+void sigusr2_handler(int sig) {
+    printf("DCControl finalizado.\n");
+    for (int i = 0; i < process_count; i++) {
+        long elapsed = difftime(
+            (processes[i].state == FINISHED ? processes[i].end_time : time(NULL)),
+            processes[i].start_time
+        );
+        printf("%d %s %ld %d %d\n",
+               processes[i].pid,
+               processes[i].name,
+               elapsed,
+               processes[i].exit_code,
+               processes[i].signal_value);
+    }
+    exit(0);
+}
+

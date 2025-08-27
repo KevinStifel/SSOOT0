@@ -8,8 +8,9 @@
 
 int main(int argc, char const *argv[]) {
     set_buffer();
-    signal(SIGCHLD, sigchld_handler);
-    signal(SIGUSR1, sigusr1_handler);
+    signal(SIGCHLD, sigchld_handler); // Para manejar hijos terminados
+    signal(SIGUSR1, sigusr1_handler); // Para abort
+    signal(SIGUSR2, sigusr2_handler); // Para shutdown
     int time_max = (argc > 1) ? atoi(argv[1]) : -1; // -1 si no hay límite
 
     while (1) {
@@ -26,7 +27,6 @@ int main(int argc, char const *argv[]) {
 
         } else if (strcmp(input[0], "shutdown") == 0) {
             handle_shutdown();
-            break;
 
         } else if (strcmp(input[0], "emergency") == 0) {
             // handle_emergency();
