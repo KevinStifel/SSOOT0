@@ -96,34 +96,36 @@ void handle_status() {
     }
     printf("\n");
 }
-
+int shutdown_pending = 0; 
 void handle_abort(int seconds) {
-    // Revisar si hay procesos en ejecución
-    int running_count = 0;
-    for (int i = 0; i < process_count; i++) {
-        if (processes[i].state == RUNNING) {
-            running_count++;
+    if (shutdown_pending == 0)
+    {
+        // Revisar si hay procesos en ejecución
+        int running_count = 0;
+        for (int i = 0; i < process_count; i++) {
+            if (processes[i].state == RUNNING) {
+                running_count++;
+            }
         }
-    }
 
-    if (running_count == 0) {
-        printf("No hay procesos en ejecución. Abort no se puede ejecutar.\n");
-        return;
-    }
+        if (running_count == 0) {
+            printf("No hay procesos en ejecución. Abort no se puede ejecutar.\n");
+            return;
+        }
 
-    pid_t pid = fork();
-    if (pid == 0) {
-        // Hijo → solo espera y notifica al padre
-        sleep(seconds);
-        kill(getppid(), SIGUSR1);
-        exit(0);
-    } else if (pid < 0) {
-        perror("fork");
+        pid_t pid = fork();
+        if (pid == 0) {
+            // Hijo → solo espera y notifica al padre
+            sleep(seconds);
+            kill(getppid(), SIGUSR1);
+            exit(0);
+        } else if (pid < 0) {
+            perror("fork");
+        }
     }
     // Padre no se bloquea
 }
-
-int shutdown_pending = 0;   // global
+  // global
 
 void handle_shutdown() {
     int running_count = 0;
