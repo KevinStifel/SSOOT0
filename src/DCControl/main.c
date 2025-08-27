@@ -7,7 +7,7 @@
 #include "process_manager.h"
 
 int main(int argc, char const *argv[]) {
-    set_buffer();  // ya dado, no lo toques
+    set_buffer();
     signal(SIGCHLD, sigchld_handler);
     signal(SIGUSR1, sigusr1_handler);
     int time_max = (argc > 1) ? atoi(argv[1]) : -1; // -1 si no hay límite
@@ -25,8 +25,7 @@ int main(int argc, char const *argv[]) {
             handle_abort(atoi(input[1]));
 
         } else if (strcmp(input[0], "shutdown") == 0) {
-            // handle_shutdown();
-            printf("[DEBUG] Shutdown command received\n");
+            handle_shutdown();
             break;
 
         } else if (strcmp(input[0], "emergency") == 0) {

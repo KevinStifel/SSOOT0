@@ -123,6 +123,71 @@ void handle_abort(int seconds) {
     // Padre no se bloquea
 }
 
+void handle_shutdown() {
+    int running_count = 0;
+    for (int i = 0; i < process_count; i++) {
+        if (processes[i].state == RUNNING) {
+            running_count++;
+        }
+    }
+
+    // Caso 1: no hay procesos activos
+    if (running_count == 0) {
+        printf("DCControl finalizado.\n");
+        for (int i = 0; i < process_count; i++) {
+            long elapsed = difftime(
+                (processes[i].state == FINISHED ? processes[i].end_time : time(NULL)),
+                processes[i].start_time
+            );
+            printf("%d %s %ld %d %d\n",
+                   processes[i].pid,
+                   processes[i].name,
+                   elapsed,
+                   processes[i].exit_code,
+                   processes[i].signal_value);
+        }
+        exit(0);
+    }
+
+    // Caso 2: hay procesos activos → enviar SIGINT
+    printf("Shutdown iniciado. Enviando SIGINT a procesos activos...\n");
+    for (int i = 0; i < process_count; i++) {
+        if (processes[i].state == RUNNING) {
+            kill(-processes[i].pid, SIGINT);  // señal al grupo del proceso
+        }
+    }
+
+    // Esperar 10 segundos sin bloquear el input loop
+    pid_t pid = fork();
+    if (pid == 0) {
+        sleep(10);
+
+        // Pasado el tiempo → forzar SIGKILL a procesos que sigan vivos
+        for (int i = 0; i < process_count; i++) {
+            if (processes[i].state == RUNNING) {
+                kill(-processes[i].pid, SIGKILL);
+            }
+        }
+
+        // Imprimir estadísticas finales
+        printf("DCControl finalizado.\n");
+        for (int i = 0; i < process_count; i++) {
+            long elapsed = difftime(
+                (processes[i].state == FINISHED ? processes[i].end_time : time(NULL)),
+                processes[i].start_time
+            );
+            printf("%d %s %ld %d %d\n",
+                   processes[i].pid,
+                   processes[i].name,
+                   elapsed,
+                   processes[i].exit_code,
+                   processes[i].signal_value);
+        }
+        exit(0);
+    }
+}
+
+
 void sigchld_handler(int sig) {
     int status;
     pid_t pid;
