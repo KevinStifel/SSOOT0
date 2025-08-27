@@ -176,6 +176,7 @@ void handle_shutdown() {
         }
 
         // avisar al padre que termine e imprima stats
+        sleep(1);   // <-- dar tiempo a que el kernel dispare SIGCHLD
         kill(getppid(), SIGUSR2);
         _exit(0);
     }
@@ -229,7 +230,7 @@ void sigusr2_handler(int sig) {
     int status;
     pid_t pid;
 
-    // Forzar a recoger todos los procesos zombies
+    // Recolectar todos los zombies que ya terminaron
     while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
         for (int i = 0; i < process_count; i++) {
             if (processes[i].pid == pid) {
@@ -238,17 +239,28 @@ void sigusr2_handler(int sig) {
 
                 if (WIFEXITED(status)) {
                     processes[i].exit_code = WEXITSTATUS(status);
-                    processes[i].signal_value = 0;
+                    processes[i].signal_value = 0;   // terminó normal
                 }
                 if (WIFSIGNALED(status)) {
                     processes[i].exit_code = -1;
-                    processes[i].signal_value = WTERMSIG(status);
+                    processes[i].signal_value = WTERMSIG(status); // 2, 9, etc.
                 }
             }
         }
     }
 
-    // Ahora sí imprimir estadísticas
+    // Para cualquier proceso que siga en RUNNING al terminar el shutdown,
+    // asumimos que fue forzado con SIGKILL y lo marcamos manualmente.
+    for (int i = 0; i < process_count; i++) {
+        if (processes[i].state == RUNNING) {
+            processes[i].state = FINISHED;
+            processes[i].end_time = time(NULL);
+            processes[i].exit_code = -1;
+            processes[i].signal_value = 9;   // asumimos SIGKILL
+        }
+    }
+
+    // Imprimir estadísticas finales
     printf("DCControl finalizado.\n");
     for (int i = 0; i < process_count; i++) {
         long elapsed = difftime(
@@ -265,6 +277,7 @@ void sigusr2_handler(int sig) {
 
     exit(0);
 }
+
 
 
 
