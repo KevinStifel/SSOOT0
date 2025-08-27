@@ -1,0 +1,33 @@
+# Archivos de objetos compilados
+*.o
+*.obj
+*.lo
+*.la
+*.al
+
+# Ejecutables
+DCControl
+a.out
+*.exe
+*.out
+*.app
+
+# Directorios de build
+obj/
+bin/
+build/
+
+# Archivos de dependencias
+*.d
+
+# Archivos de log y temporales
+*.log
+*.tmp
+*.swp
+*.swo
+
+# Archivos creados por editores
+*.DS_Store
+*.vscode/
+*.idea/
+*.user
