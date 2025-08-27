@@ -33,17 +33,46 @@ void handle_launch(char **input, int time_max) {
     pid_t pid = fork();
 
     if (pid == 0) {
-        printf("Launched process '%s' with PID %d\n", input[1], pid);
+        // CHILD: nuevo grupo para poder matar el árbol si es necesario
+        setpgid(0, 0);
+        printf("Launched process '%s' with PID %d\n", input[1], (int)getpid());
         execvp(input[1], &input[1]);
         perror("execvp");
-        exit(1);
+        _exit(127);
     } else if (pid > 0) {
-        printf("Launched process '%s' with PID %d\n", input[1], pid);
+        // PARENT
+        printf("Launched process '%s' with PID %d\n", input[1], (int)pid);
+
+        // Asegurar PGID del hijo (no crítico si falla)
+        setpgid(pid, pid);
+
         add_process(pid, input[1]);
+
+        // --------- Watcher NO bloqueante ----------
+        if (time_max > 0) {
+            pid_t w = fork();
+            if (w == 0) { // watcher
+                sleep(time_max);
+
+                // ¿sigue existiendo el proceso?
+                if (kill(pid, 0) == 0) {
+                    // matar al GRUPO del proceso: -pid
+                    kill(-pid, SIGTERM);            // 1) avisa
+                    sleep(5);                       // gracia de 5s
+                    if (kill(pid, 0) == 0) {
+                        kill(-pid, SIGKILL);        // 2) fuerza
+                    }
+                }
+                _exit(0);
+            } else if (w < 0) {
+                perror("fork watcher");
+            }
+        }
     } else {
         perror("fork");
     }
 }
+
 
 void handle_status() {
     const char *state_str[] = {"RUNNING", "FINISHED"};
