@@ -5,22 +5,35 @@
 #include <unistd.h>
 #include <signal.h>
 #include <sys/wait.h>
+#include <time.h>
 
 ProcessInfo *processes = NULL; // arreglo dinámico de procesos
 int process_count = 0;
+int shutdown_pending = 0;
+
+void cleanup_all_processes(void) {
+    free(processes);
+    processes = NULL;
+    process_count = 0;
+}
 
 void add_process(pid_t pid, char *name) {
-    // Aumentar espacio dinámicamente
-    process_count++;
-    processes = realloc(processes, process_count * sizeof(ProcessInfo));
-    if (!processes) {
+    int new_count = process_count + 1;
+    ProcessInfo *tmp = realloc(processes, (size_t)new_count * sizeof(ProcessInfo));
+    if (!tmp) {
         perror("realloc");
         exit(1);
     }
-
-    // Inicializar el nuevo proceso en la última posición
+    processes = tmp;
+    process_count = new_count;
     processes[process_count - 1].pid = pid;
-    strncpy(processes[process_count - 1].name, name, 255);
+
+    size_t cap = sizeof(processes[process_count - 1].name);
+    if (cap > 0) {
+        strncpy(processes[process_count - 1].name, name ? name : "", cap - 1);
+        processes[process_count - 1].name[cap - 1] = '\0';
+    }
+
     processes[process_count - 1].start_time = time(NULL);
     processes[process_count - 1].end_time = 0;
     processes[process_count - 1].exit_code = -1;
@@ -28,39 +41,30 @@ void add_process(pid_t pid, char *name) {
     processes[process_count - 1].state = RUNNING;
 }
 
-
 void handle_launch(char **input, int time_max) {
     pid_t pid = fork();
 
     if (pid == 0) {
-        // CHILD: nuevo grupo para poder matar el árbol si es necesario
         setpgid(0, 0);
         printf("Launched process '%s' with PID %d\n", input[1], (int)getpid());
         execvp(input[1], &input[1]);
         perror("execvp");
         _exit(127);
     } else if (pid > 0) {
-        // PARENT
         printf("Launched process '%s' with PID %d\n", input[1], (int)pid);
-
-        // Asegurar PGID del hijo (no crítico si falla)
         setpgid(pid, pid);
 
         add_process(pid, input[1]);
-
-        // --------- Watcher NO bloqueante ----------
         if (time_max > 0) {
             pid_t w = fork();
-            if (w == 0) { // watcher
-                sleep(time_max);
+            if (w == 0) { 
+                sleep((unsigned)time_max);
 
-                // ¿sigue existiendo el proceso?
                 if (kill(pid, 0) == 0) {
-                    // matar al GRUPO del proceso: -pid
-                    kill(-pid, SIGTERM);            // 1) avisa
-                    sleep(5);                       // gracia de 5s
+                    kill(-pid, SIGTERM);           
+                    sleep(5);                      
                     if (kill(pid, 0) == 0) {
-                        kill(-pid, SIGKILL);        // 2) fuerza
+                        kill(-pid, SIGKILL);       
                     }
                 }
                 _exit(0);
@@ -73,18 +77,17 @@ void handle_launch(char **input, int time_max) {
     }
 }
 
-
 void handle_status() {
     const char *state_str[] = {"RUNNING", "FINISHED"};
 
-    printf("\n%-8s │ %-15s │ %-8s │ %-10s │ %-8s │ %-8s\n", 
+    printf("\n%-8s │ %-15s │ %-8s │ %-10s │ %-8s │ %-8s\n",
            "PID", "NAME", "TIME(s)", "STATE", "EXIT", "SIGNAL");
     printf("─────────┼─────────────────┼──────────┼────────────┼──────────┼──────────\n");
 
     for (int i = 0; i < process_count; i++) {
         long elapsed = (processes[i].state == FINISHED)
-            ? difftime(processes[i].end_time, processes[i].start_time)
-            : difftime(time(NULL), processes[i].start_time);
+            ? (long)difftime(processes[i].end_time, processes[i].start_time)
+            : (long)difftime(time(NULL), processes[i].start_time);
 
         printf("%-8d │ %-15s │ %-8ld │ %-10s │ %-8d │ %-8d\n",
                processes[i].pid,
@@ -96,11 +99,9 @@ void handle_status() {
     }
     printf("\n");
 }
-int shutdown_pending = 0; 
+
 void handle_abort(int seconds) {
-    if (shutdown_pending == 0)
-    {
-        // Revisar si hay procesos en ejecución
+    if (shutdown_pending == 0) {
         int running_count = 0;
         for (int i = 0; i < process_count; i++) {
             if (processes[i].state == RUNNING) {
@@ -115,17 +116,14 @@ void handle_abort(int seconds) {
 
         pid_t pid = fork();
         if (pid == 0) {
-            // Hijo → solo espera y notifica al padre
-            sleep(seconds);
+            sleep((unsigned)seconds);
             kill(getppid(), SIGUSR1);
-            exit(0);
+            _exit(0);
         } else if (pid < 0) {
             perror("fork");
         }
     }
-    // Padre no se bloquea
 }
-  // global
 
 void handle_shutdown() {
     int running_count = 0;
@@ -135,11 +133,10 @@ void handle_shutdown() {
         }
     }
 
-    // Caso 1: no hay procesos en ejecución
     if (running_count == 0) {
         printf("DCControl finalizado.\n");
         for (int i = 0; i < process_count; i++) {
-            long elapsed = difftime(
+            long elapsed = (long)difftime(
                 (processes[i].state == FINISHED ? processes[i].end_time : time(NULL)),
                 processes[i].start_time
             );
@@ -150,41 +147,40 @@ void handle_shutdown() {
                    processes[i].exit_code,
                    processes[i].signal_value);
         }
+        cleanup_all_processes();
         exit(0);
     }
 
-    // Caso 2: hay procesos en ejecución
-    shutdown_pending = 1; // anula abort
+    shutdown_pending = 1; 
 
     for (int i = 0; i < process_count; i++) {
         if (processes[i].state == RUNNING) {
-            if (kill(-processes[i].pid, 0) == 0) {   // sigue vivo
-                kill(-processes[i].pid, SIGINT);     // SIGINT = 2
+            if (kill(-processes[i].pid, 0) == 0) {  
+                kill(-processes[i].pid, SIGINT);     
             }
         }
     }
 
-    // Hijo en background que espera 10 segundos y manda SIGKILL si hace falta
     pid_t pid = fork();
     if (pid == 0) {
         sleep(10);
 
         for (int i = 0; i < process_count; i++) {
             if (processes[i].state == RUNNING) {
-                if (kill(-processes[i].pid, 0) == 0) { // sigue vivo
-                    kill(-processes[i].pid, SIGKILL);  // SIGKILL = 9
+                if (kill(-processes[i].pid, 0) == 0) { 
+                    kill(-processes[i].pid, SIGKILL);  
                 }
             }
         }
 
-        // avisar al padre que termine e imprima stats
-        sleep(1);   // <-- dar tiempo a que el kernel dispare SIGCHLD
+        sleep(1);  
         kill(getppid(), SIGUSR2);
         _exit(0);
     }
 }
 
 void sigchld_handler(int sig) {
+    (void)sig;
     int status;
     pid_t pid;
 
@@ -196,11 +192,11 @@ void sigchld_handler(int sig) {
 
                 if (WIFEXITED(status)) {
                     processes[i].exit_code = WEXITSTATUS(status);
-                    processes[i].signal_value = 0;  // terminó normalmente
+                    processes[i].signal_value = 0;  
                 }
                 if (WIFSIGNALED(status)) {
                     processes[i].exit_code = -1;
-                    processes[i].signal_value = WTERMSIG(status); // ej: 9 (SIGKILL)
+                    processes[i].signal_value = WTERMSIG(status); 
                 }
             }
         }
@@ -208,13 +204,14 @@ void sigchld_handler(int sig) {
 }
 
 void sigusr1_handler(int sig) {
+    (void)sig;
     printf("Abort cumplido.\n");
-    printf("%-8s %-12s %-6s %-6s %-6s\n", 
+    printf("%-8s %-12s %-6s %-6s %-6s\n",
            "PID", "NAME", "TIME", "EXIT", "SIGNAL");
 
     for (int i = 0; i < process_count; i++) {
         if (processes[i].state == RUNNING) {
-            long elapsed = difftime(time(NULL), processes[i].start_time);
+            long elapsed = (long)difftime(time(NULL), processes[i].start_time);
             printf("%-8d %-12s %-6ld %-6d %-6d\n",
                    processes[i].pid,
                    processes[i].name,
@@ -222,17 +219,16 @@ void sigusr1_handler(int sig) {
                    processes[i].exit_code,
                    processes[i].signal_value);
 
-            // Enviar señal SIGTERM
             kill(processes[i].pid, SIGTERM);
         }
     }
 }
 
 void sigusr2_handler(int sig) {
+    (void)sig;
     int status;
     pid_t pid;
 
-    // Recolectar todos los zombies que ya terminaron
     while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
         for (int i = 0; i < process_count; i++) {
             if (processes[i].pid == pid) {
@@ -241,31 +237,28 @@ void sigusr2_handler(int sig) {
 
                 if (WIFEXITED(status)) {
                     processes[i].exit_code = WEXITSTATUS(status);
-                    processes[i].signal_value = 0;   // terminó normal
+                    processes[i].signal_value = 0; 
                 }
                 if (WIFSIGNALED(status)) {
                     processes[i].exit_code = -1;
-                    processes[i].signal_value = WTERMSIG(status); // 2, 9, etc.
+                    processes[i].signal_value = WTERMSIG(status); 
                 }
             }
         }
     }
 
-    // Para cualquier proceso que siga en RUNNING al terminar el shutdown,
-    // asumimos que fue forzado con SIGKILL y lo marcamos manualmente.
     for (int i = 0; i < process_count; i++) {
         if (processes[i].state == RUNNING) {
             processes[i].state = FINISHED;
             processes[i].end_time = time(NULL);
             processes[i].exit_code = -1;
-            processes[i].signal_value = 9;   // asumimos SIGKILL
+            processes[i].signal_value = 9;  
         }
     }
 
-    // Imprimir estadísticas finales
     printf("DCControl finalizado.\n");
     for (int i = 0; i < process_count; i++) {
-        long elapsed = difftime(
+        long elapsed = (long)difftime(
             (processes[i].state == FINISHED ? processes[i].end_time : time(NULL)),
             processes[i].start_time
         );
@@ -276,11 +269,9 @@ void sigusr2_handler(int sig) {
                processes[i].exit_code,
                processes[i].signal_value);
     }
-
+    cleanup_all_processes();
     exit(0);
 }
-
-
 
 
 

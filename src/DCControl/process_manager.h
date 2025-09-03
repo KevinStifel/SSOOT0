@@ -24,6 +24,7 @@ void handle_status();
 void handle_abort(int time);
 void handle_shutdown();
 void handle_emergency();
+void cleanup_all_processes(void);
 void sigchld_handler(int sig);
 void sigusr1_handler(int sig);
 void sigusr2_handler(int sig);
